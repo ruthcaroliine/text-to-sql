@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Text to SQL</title>
+  <style>
+    body { font-family: monospace; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { font-size: 1.4rem; margin-bottom: 24px; }
+    textarea, input { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 10px; font-family: monospace; font-size: 14px; border-radius: 4px; }
+    textarea { height: 80px; resize: vertical; }
+    button { margin-top: 10px; padding: 10px 24px; background: #e0e0e0; color: #0f0f0f; border: none; font-family: monospace; font-size: 14px; cursor: pointer; }
+    button:hover { background: #fff; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    pre { background: #1a1a1a; border: 1px solid #333; padding: 16px; overflow-x: auto; color: #7ec8a8; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #1a1a1a; padding: 8px 12px; text-align: left; border-bottom: 1px solid #333; }
+    td { padding: 8px 12px; border-bottom: 1px solid #1a1a1a; }
+    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #555; margin: 20px 0 6px; }
+    .error { color: #ef4444; background: #1a0e0e; border: 1px solid #3a1a1a; padding: 12px; }
+    #status { font-size: 12px; color: #555; margin-top: 6px; height: 16px; }
+  </style>
+</head>
+<body>
+
+<h1>Text → SQL</h1>
+
+<div class="label">Your question</div>
+<textarea id="question" placeholder="e.g. Show me the top 10 customers by total order value"></textarea>
+<button id="runBtn" onclick="run()">Run Query</button>
+<div id="status"></div>
+
+<div id="sql-section" style="display:none">
+  <div class="label">Generated SQL</div>
+  <pre id="sql-output"></pre>
+</div>
+
+<div id="results-section" style="display:none">
+  <div class="label">Results</div>
+  <div id="results-output"></div>
+</div>
+
+<script>
+  const API = "http://localhost:8000";
+
+  async function run() {
+    const question = document.getElementById("question").value.trim();
+    if (!question) return;
+
+    const btn = document.getElementById("runBtn");
+    const status = document.getElementById("status");
+
+    btn.disabled = true;
+    status.textContent = "Generating SQL...";
+    document.getElementById("sql-section").style.display = "none";
+    document.getElementById("results-section").style.display = "none";
+
+    try {
+      const res = await fetch(`${API}/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError(data.detail || "Something went wrong");
+        return;
+      }
+
+      // Show SQL
+      document.getElementById("sql-output").textContent = data.sql;
+      document.getElementById("sql-section").style.display = "block";
+
+      // Show results table
+      showTable(data.results);
+      status.textContent = `${data.results.rows.length} row(s) returned`;
+
+    } catch (err) {
+      showError("Could not reach the server. Is it running?");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function showTable({ columns, rows }) {
+    const section = document.getElementById("results-section");
+    const container = document.getElementById("results-output");
+
+    if (!rows.length) {
+      container.innerHTML = "<p style='color:#555'>No results returned.</p>";
+      section.style.display = "block";
+      return;
+    }
+
+    const headers = columns.map(c => `<th>${c}</th>`).join("");
+    const body = rows.map(row =>
+      `<tr>${row.map(cell => `<td>${cell ?? "NULL"}</td>`).join("")}</tr>`
+    ).join("");
+
+    container.innerHTML = `<table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+    section.style.display = "block";
+  }
+
+  function showError(msg) {
+    document.getElementById("results-output").innerHTML = `<div class="error">${msg}</div>`;
+    document.getElementById("results-section").style.display = "block";
+    document.getElementById("status").textContent = "";
+  }
+
+  // Allow Ctrl+Enter to submit
+  document.getElementById("question").addEventListener("keydown", e => {
+    if (e.key === "Enter" && e.ctrlKey) run();
+  });
+</script>
+
+</body>
+</html>
