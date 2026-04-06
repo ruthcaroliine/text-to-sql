@@ -19,7 +19,7 @@ app.add_middleware(
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 DB_URL = os.getenv("DATABASE_URL")
-
+APP_DB_URL = os.getenv("APP_DATABASE_URL")
 
 async def get_schema() -> str:
     """Fetch the live schema directly from Postgres."""
@@ -82,9 +82,43 @@ async def run_query(sql: str) -> dict:
     finally:
         await conn.close()
 
+async def save_history(question: str, sql: str, row_count: int, was_fixed: bool):
+    """Save a successful query to history."""
+    conn = await asyncpg.connect(APP_DB_URL)
+    try:
+        await conn.execute(
+            "INSERT INTO query_history (question, sql_query, row_count, was_fixed) VALUES ($1, $2, $3, $4)",
+            question, sql, row_count, was_fixed
+        )
+    finally:
+        await conn.close()
+
 
 class QueryRequest(BaseModel):
     question: str
+
+
+def fix_sql(bad_sql: str, error: str, question: str, schema: str) -> str:
+    """Ask the LLM to fix a broken SQL query."""
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are an expert SQL debugger for PostgreSQL.
+You will be given a SQL query that failed, the error message, and the original question.
+Return ONLY the corrected SQL query.
+- No explanations, no markdown, no backticks
+- Fix the exact error described
+- Keep the query as close to the original as possible"""
+            },
+            {
+                "role": "user",
+                "content": f"Schema:\n{schema}\n\nOriginal question: {question}\n\nFailed SQL:\n{bad_sql}\n\nError: {error}"
+            }
+        ]
+    )
+    return response.choices[0].message.content.strip()
 
 
 @app.post("/query")
@@ -92,13 +126,36 @@ async def query(req: QueryRequest):
     try:
         schema = await get_schema()
         sql = generate_sql(req.question, schema)
-        results = await run_query(sql)
-        return {"sql": sql, "results": results}
-    except asyncpg.PostgresError as e:
-        raise HTTPException(status_code=400, detail=f"SQL error: {str(e)}")
+
+        try:
+            results = await run_query(sql)
+            await save_history(req.question, sql, len(results["rows"]), False)
+            return {"sql": sql, "results": results, "fixed": False}
+        except asyncpg.PostgresError as e:
+            # First attempt failed — ask LLM to fix it
+            fixed_sql = fix_sql(str(sql), str(e), req.question, schema)
+            try:
+                results = await run_query(fixed_sql)
+                await save_history(req.question, fixed_sql, len(results["rows"]), True)
+                return {"sql": fixed_sql, "results": results, "fixed": True}
+            except asyncpg.PostgresError as e2:
+                raise HTTPException(status_code=400, detail=f"SQL error after retry: {str(e2)}")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
+@app.get("/history")
+async def history():
+    conn = await asyncpg.connect(APP_DB_URL)
+    try:
+        rows = await conn.fetch(
+            "SELECT id, question, sql_query, row_count, was_fixed, created_at FROM query_history ORDER BY created_at DESC LIMIT 20"
+        )
+        return {"history": [dict(r) for r in rows]}
+    finally:
+        await conn.close()
 
 @app.get("/schema")
 async def schema():

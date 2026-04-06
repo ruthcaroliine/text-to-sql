@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <meta charset="UTF-8" />
   <title>Text to SQL</title>
   <style>
@@ -27,6 +28,7 @@
 <div class="label">Your question</div>
 <textarea id="question" placeholder="e.g. Show me the top 10 customers by total order value"></textarea>
 <button id="runBtn" onclick="run()">Run Query</button>
+<button onclick="loadHistory()">Show History</button>
 <div id="status"></div>
 
 <div id="sql-section" style="display:none">
@@ -34,13 +36,24 @@
   <pre id="sql-output"></pre>
 </div>
 
+<div id="chart-section" style="display:none; margin-bottom:24px">
+  <div class="label">Chart</div>
+  <canvas id="myChart" height="100"></canvas>
+</div>
+
 <div id="results-section" style="display:none">
   <div class="label">Results</div>
   <div id="results-output"></div>
 </div>
 
+<div id="history-section" style="display:none">
+  <div class="label">Recent Queries</div>
+  <div id="history-output"></div>
+</div>
+
 <script>
   const API = "http://localhost:8000";
+  let chartInstance = null;
 
   async function run() {
     const question = document.getElementById("question").value.trim();
@@ -53,6 +66,12 @@
     status.textContent = "Generating SQL...";
     document.getElementById("sql-section").style.display = "none";
     document.getElementById("results-section").style.display = "none";
+    document.getElementById("chart-section").style.display = "none";
+
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+    }
 
     try {
       const res = await fetch(`${API}/query`, {
@@ -68,9 +87,18 @@
         return;
       }
 
+      // Show fixed notice if query was auto-corrected
+      const fixedNotice = data.fixed
+        ? "<div style='color:#f59e0b; font-size:12px; margin-bottom:8px'>⚠️ Query was automatically corrected</div>"
+        : "";
+
       // Show SQL
+      document.getElementById("sql-output").innerHTML = fixedNotice + document.getElementById("sql-output").textContent;
       document.getElementById("sql-output").textContent = data.sql;
       document.getElementById("sql-section").style.display = "block";
+
+      // Try to render chart
+      const chartRendered = tryRenderChart(data.results);
 
       // Show results table
       showTable(data.results);
@@ -81,6 +109,54 @@
     } finally {
       btn.disabled = false;
     }
+  }
+
+  function tryRenderChart({ columns, rows }) {
+    if (columns.length !== 2 || rows.length === 0) return false;
+
+    const firstVals = rows.map(r => r[0]);
+    const secondVals = rows.map(r => r[1]);
+
+    const secondIsNumeric = secondVals.every(v => v !== null && !isNaN(Number(v)));
+    if (!secondIsNumeric) return false;
+
+    const labels = firstVals.map(v => String(v));
+    const values = secondVals.map(v => Number(v));
+
+    // Detect if first column looks like dates
+    const looksLikeDates = firstVals.every(v => !isNaN(Date.parse(String(v))));
+    const chartType = looksLikeDates ? "line" : "bar";
+
+    const ctx = document.getElementById("myChart").getContext("2d");
+    chartInstance = new Chart(ctx, {
+      type: chartType,
+      data: {
+        labels,
+        datasets: [{
+          label: columns[1],
+          data: values,
+          backgroundColor: "rgba(126, 200, 168, 0.4)",
+          borderColor: "rgba(126, 200, 168, 1)",
+          borderWidth: 2,
+          borderRadius: 4,
+          tension: 0.3,
+          fill: chartType === "line"
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: "#aaa", font: { family: "monospace" } } }
+        },
+        scales: {
+          x: { ticks: { color: "#666", font: { family: "monospace" } }, grid: { color: "#1a1a1a" } },
+          y: { ticks: { color: "#666", font: { family: "monospace" } }, grid: { color: "#1a1a1a" } }
+        }
+      }
+    });
+
+    document.getElementById("chart-section").style.display = "block";
+    return true;
   }
 
   function showTable({ columns, rows }) {
@@ -108,7 +184,32 @@
     document.getElementById("status").textContent = "";
   }
 
-  // Allow Ctrl+Enter to submit
+  async function loadHistory() {
+    const res = await fetch("http://localhost:8000/history");
+    const data = await res.json();
+    const section = document.getElementById("history-section");
+    const container = document.getElementById("history-output");
+
+    if (!data.history.length) {
+      container.innerHTML = "<p style='color:#555'>No history yet.</p>";
+      section.style.display = "block";
+      return;
+    }
+
+    container.innerHTML = data.history.map(h => `
+      <div style="border-bottom:1px solid #1a1a1a; padding:12px 0; cursor:pointer"
+           onclick="document.getElementById('question').value='${h.question.replace(/'/g, "\\'")}'" >
+        <div style="font-size:13px; color:#ccc">${h.question}</div>
+        <div style="font-size:11px; color:#555; margin-top:4px">
+          ${h.row_count} rows · ${new Date(h.created_at).toLocaleString()}
+          ${h.was_fixed ? ' · <span style="color:#f59e0b">auto-fixed</span>' : ''}
+        </div>
+      </div>
+    `).join("");
+
+    section.style.display = "block";
+  }
+
   document.getElementById("question").addEventListener("keydown", e => {
     if (e.key === "Enter" && e.ctrlKey) run();
   });
