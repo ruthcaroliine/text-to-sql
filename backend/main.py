@@ -120,6 +120,30 @@ Return ONLY the corrected SQL query.
     )
     return response.choices[0].message.content.strip()
 
+def summarise_results(question: str, sql: str, columns: list, rows: list) -> str:
+    """Ask the LLM to summarise the query results in plain English."""
+    # Only send first 20 rows to avoid token limits
+    preview = rows[:20]
+    rows_text = "\n".join([", ".join(str(v) for v in row) for row in preview])
+    
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are a data analyst assistant. 
+Given a question, the SQL query that was run, and the results, write a 2-3 sentence plain English summary of what the data shows.
+Be specific — mention actual numbers, names, or patterns from the data.
+Do not mention SQL or technical details."""
+            },
+            {
+                "role": "user",
+                "content": f"Question: {question}\n\nSQL:\n{sql}\n\nColumns: {', '.join(columns)}\n\nResults:\n{rows_text}"
+            }
+        ]
+    )
+    return response.choices[0].message.content.strip()
+
 
 @app.post("/query")
 async def query(req: QueryRequest):
@@ -129,15 +153,17 @@ async def query(req: QueryRequest):
 
         try:
             results = await run_query(sql)
+            summary = summarise_results(req.question, sql, results["columns"], results["rows"]) if results["rows"] else "No results found for this query."
             await save_history(req.question, sql, len(results["rows"]), False)
-            return {"sql": sql, "results": results, "fixed": False}
+            return {"sql": sql, "results": results, "fixed": False, "summary": summary}
         except asyncpg.PostgresError as e:
             # First attempt failed — ask LLM to fix it
             fixed_sql = fix_sql(str(sql), str(e), req.question, schema)
             try:
                 results = await run_query(fixed_sql)
+                summary = summarise_results(req.question, sql, results["columns"], results["rows"]) if results["rows"] else "No results found for this query."
                 await save_history(req.question, fixed_sql, len(results["rows"]), True)
-                return {"sql": fixed_sql, "results": results, "fixed": True}
+                return {"sql": fixed_sql, "results": results, "fixed": True, "summary": summary}
             except asyncpg.PostgresError as e2:
                 raise HTTPException(status_code=400, detail=f"SQL error after retry: {str(e2)}")
 

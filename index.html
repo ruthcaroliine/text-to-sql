@@ -36,6 +36,11 @@
   <pre id="sql-output"></pre>
 </div>
 
+<div id="summary-section" style="display:none">
+  <div class="label">Summary</div>
+  <div id="summary-output" style="font-size:14px; color:#aaa; line-height:1.8; background:#1a1a1a; border:1px solid #333; padding:16px; border-radius:4px;"></div>
+</div>
+
 <div id="chart-section" style="display:none; margin-bottom:24px">
   <div class="label">Chart</div>
   <canvas id="myChart" height="100"></canvas>
@@ -67,6 +72,7 @@
     document.getElementById("sql-section").style.display = "none";
     document.getElementById("results-section").style.display = "none";
     document.getElementById("chart-section").style.display = "none";
+    document.getElementById("summary-section").style.display = "none";
 
     if (chartInstance) {
       chartInstance.destroy();
@@ -96,6 +102,11 @@
       document.getElementById("sql-output").innerHTML = fixedNotice + document.getElementById("sql-output").textContent;
       document.getElementById("sql-output").textContent = data.sql;
       document.getElementById("sql-section").style.display = "block";
+
+      if (data.summary) {
+      document.getElementById("summary-output").textContent = data.summary;
+      document.getElementById("summary-section").style.display = "block";
+}
 
       // Try to render chart
       const chartRendered = tryRenderChart(data.results);
