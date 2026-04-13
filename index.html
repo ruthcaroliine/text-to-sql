@@ -61,66 +61,63 @@
   let chartInstance = null;
 
   async function run() {
-    const question = document.getElementById("question").value.trim();
-    if (!question) return;
+  const question = document.getElementById("question").value.trim();
+  if (!question) return;
 
-    const btn = document.getElementById("runBtn");
-    const status = document.getElementById("status");
+  const btn = document.getElementById("runBtn");
+  const status = document.getElementById("status");
 
-    btn.disabled = true;
-    status.textContent = "Generating SQL...";
-    document.getElementById("sql-section").style.display = "none";
-    document.getElementById("results-section").style.display = "none";
-    document.getElementById("chart-section").style.display = "none";
-    document.getElementById("summary-section").style.display = "none";
+  btn.disabled = true;
+  status.textContent = "Generating SQL...";
+  document.getElementById("sql-section").style.display = "none";
+  document.getElementById("results-section").style.display = "none";
+  document.getElementById("chart-section").style.display = "none";
+  document.getElementById("summary-section").style.display = "none";
 
-    if (chartInstance) {
-      chartInstance.destroy();
-      chartInstance = null;
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+
+  try {
+    const res = await fetch(`${API}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      showError(data.detail || "Something went wrong");
+      return;
     }
 
-    try {
-      const res = await fetch(`${API}/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question })
-      });
+    // Show SQL
+    const fixedNotice = data.fixed
+      ? "<div style='color:#f59e0b; font-size:12px; margin-bottom:8px'>⚠️ Query was automatically corrected</div>"
+      : "";
+    document.getElementById("sql-output").innerHTML = fixedNotice + `<span>${data.sql}</span>`;
+    document.getElementById("sql-section").style.display = "block";
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        showError(data.detail || "Something went wrong");
-        return;
-      }
-
-      // Show fixed notice if query was auto-corrected
-      const fixedNotice = data.fixed
-        ? "<div style='color:#f59e0b; font-size:12px; margin-bottom:8px'>⚠️ Query was automatically corrected</div>"
-        : "";
-
-      // Show SQL
-      document.getElementById("sql-output").innerHTML = fixedNotice + document.getElementById("sql-output").textContent;
-      document.getElementById("sql-output").textContent = data.sql;
-      document.getElementById("sql-section").style.display = "block";
-
-      if (data.summary) {
+    // Show summary
+    if (data.summary) {
       document.getElementById("summary-output").textContent = data.summary;
       document.getElementById("summary-section").style.display = "block";
-}
-
-      // Try to render chart
-      const chartRendered = tryRenderChart(data.results);
-
-      // Show results table
-      showTable(data.results);
-      status.textContent = `${data.results.rows.length} row(s) returned`;
-
-    } catch (err) {
-      showError("Could not reach the server. Is it running?");
-    } finally {
-      btn.disabled = false;
     }
+
+    // Try chart first, then table
+    tryRenderChart(data.results);
+    showTable(data.results);
+
+    status.textContent = `${data.results.rows.length} row(s) returned`;
+
+  } catch (err) {
+    showError("Could not reach the server. Is it running?");
+  } finally {
+    btn.disabled = false;
   }
+}
 
   function tryRenderChart({ columns, rows }) {
     if (columns.length !== 2 || rows.length === 0) return false;
@@ -139,6 +136,10 @@
     const chartType = looksLikeDates ? "line" : "bar";
 
     const ctx = document.getElementById("myChart").getContext("2d");
+    if (chartInstance) {
+      chartInstance.destroy();
+      chartInstance = null;
+  }
     chartInstance = new Chart(ctx, {
       type: chartType,
       data: {
