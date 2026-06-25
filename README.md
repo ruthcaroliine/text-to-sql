@@ -6,13 +6,6 @@ A full-stack web app that converts natural language questions into SQL queries u
 
 ---
 
-## Demo
-
-![Demo screenshot](screenshot.png)
-
-> *"Show me the top 5 customers by total order value"* → SQL generated, executed, summarised in seconds.
-
----
 
 ## Features
 
